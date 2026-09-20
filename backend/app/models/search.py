@@ -39,6 +39,7 @@ class SearchResult(BaseModel):
 
     search_result_id: UUID = Field(default_factory=uuid4)
     query_id: UUID
+    position: int | None = Field(default=None, ge=1)
     title: str = Field(min_length=1)
     url: HttpUrl
     canonical_url: HttpUrl | None = None
@@ -46,6 +47,7 @@ class SearchResult(BaseModel):
     snippet: str | None = None
     source_type: SourceType
     publication_date: date | None = None
+    author: str | None = None
     retrieved_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     engine: SearchEngine
     engine_metadata: dict[str, Any] = Field(default_factory=dict)
