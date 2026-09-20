@@ -42,7 +42,7 @@ TruthLens should then:
 3. Generate relevant search queries.
 4. Search the live web using SerpApi.
 5. Collect relevant sources.
-6. Extract evidence from those sources.
+6. Use SerpApi search-result data to extract snippet-based evidence from those sources.
 7. Determine whether each piece of evidence supports, contradicts, or contextualizes the claim.
 8. Detect conflicts or missing evidence.
 9. Perform additional targeted searches when necessary.
@@ -89,7 +89,7 @@ Atomic claims:
 
 The exact decomposition should be generated dynamically.
 
-The system should avoid producing unnecessary or unrelated atomic claims.
+The system should avoid producing unnecessary or unrelated atomic claims. The MVP default is a maximum of 5 atomic claims per user claim; this is a bounded configuration value.
 
 
 ## 3.3 Search Query Generation
@@ -110,6 +110,8 @@ Queries:
 "electric vehicle total cost ownership maintenance"
 
 Queries should be designed to find evidence rather than simply repeat the original claim.
+
+The MVP default is a maximum of 2 queries per atomic claim. The research planner may select one or more appropriate SerpApi engines for an atomic claim.
 
 
 # 4. SerpApi Integration
@@ -132,7 +134,7 @@ Used for claims involving recent or changing information.
 
 Used for academic, scientific, or research-oriented claims.
 
-The system should select appropriate search sources instead of blindly calling every engine.
+The system should select one or more appropriate search sources instead of blindly calling every engine. SerpApi is a core required part of the research workflow, not an optional enhancement.
 
 
 # 5. Search Result Collection
@@ -143,20 +145,25 @@ At minimum:
 
 title
 url
+canonical_url
 domain
 snippet
 source_type
 publication_date
 retrieved_at
+query_id
+search_result_id
 
 The system should normalize results from different search engines into a common internal format.
 
 Search results should not automatically be treated as evidence.
 
+The MVP considers at most 5 results per query by default. Use canonicalized source URLs where practical to deduplicate results, so repeated versions of the same source do not artificially increase the apparent amount of evidence. Source types such as `web/general`, `news`, and `academic` describe retrieval/classification only and are not credibility rankings.
+
 
 # 6. Source Selection
 
-The system should identify potentially relevant sources from search results.
+The system should identify potentially relevant sources from SerpApi search results.
 
 Consider:
 
@@ -170,10 +177,12 @@ The MVP does not need a sophisticated source credibility scoring system.
 
 Do not invent a numerical credibility score.
 
+If relevance is retained internally, it is a research/ranking signal only. It must not be interpreted or displayed as a measure of truth, credibility, source reliability, or truth likelihood.
+
 
 # 7. Evidence Extraction
 
-For relevant sources, extract concise evidence related to the claim.
+For relevant SerpApi results, retain concise evidence related to the atomic claim.
 
 Example:
 
@@ -181,14 +190,20 @@ Source:
 Example Research Organization
 
 Evidence:
-"The study reports lower routine maintenance expenditure
+Retrieved snippet: "The study reports lower routine maintenance expenditure
 for electric vehicles during the observed ownership period."
 
-Each evidence item must remain linked to its source.
+For the MVP, SerpApi search-result data is the evidence acquisition layer. Use the structured data SerpApi returns, including title, URL/link, source/domain, publication/date metadata, snippet, and engine-specific metadata where available. Do not directly scrape or fetch source webpages, and never imply that TruthLens read the full article or page.
+
+Evidence shown to users must be clearly represented as either a retrieved search-result snippet or a faithful paraphrase derived from that snippet. Each evidence item must remain linked to its original source URL so the user can inspect it directly.
 
 Minimum evidence fields:
 
 claim_id
+atomic_claim_id
+query_id
+search_result_id
+evidence_id
 source_title
 source_url
 source_domain
@@ -202,7 +217,7 @@ relevance
 
 # 8. Evidence Classification
 
-Each evidence item must be classified relative to the claim.
+Each evidence item must be classified relative to its atomic claim.
 
 Allowed classifications:
 
@@ -241,6 +256,8 @@ CONTRADICTS
 
 The classification must consider the exact claim.
 
+An LLM may produce a Pydantic-validated structured classification, but it must not arbitrarily select the final overall assessment.
+
 
 # 9. Evidence Gap Detection
 
@@ -255,7 +272,7 @@ Potential gaps include:
 - evidence is outdated for a time-sensitive claim
 - important assumptions are unclear
 
-If a meaningful gap is identified, TruthLens should generate a targeted follow-up search.
+If a meaningful gap is identified, TruthLens may generate a targeted follow-up search. A follow-up is permitted only for an unresolved contradiction, important evidence gap, ambiguous atomic claim, or need for a more targeted query.
 
 
 # 10. Iterative Research
@@ -282,7 +299,7 @@ Final Synthesis
 
 The system must impose a maximum number of research iterations.
 
-The exact limit can be configured in application settings.
+The exact limit can be configured in application settings. The MVP default is 1 follow-up research round.
 
 The goal is controlled research, not unlimited autonomous searching.
 
@@ -313,6 +330,8 @@ The retrieved evidence contains meaningful support and contradiction, or the con
 The available evidence does not adequately address the claim.
 
 The assessment must be accompanied by an explanation.
+
+The final label is calculated deterministically from unique evidence classifications across atomic claims, rather than selected freely by the LLM. For an atomic claim, both direct support and contradiction yields `MIXED`; support only yields `SUPPORTED`; contradiction only yields `CONTRADICTED`; neither yields `INSUFFICIENT_EVIDENCE`. For the original claim, any insufficiently addressed atomic claim yields `INSUFFICIENT_EVIDENCE`; otherwise any mixed atomic assessment or combination of supported and contradicted atomic assessments yields `MIXED`; all supported yields `SUPPORTED`; and all contradicted yields `CONTRADICTED`. `CONTEXTUALIZES` and `DOES_NOT_ADDRESS` inform the explanation but are not direct support or contradiction.
 
 
 # 12. No Arbitrary Truth Score
@@ -358,7 +377,7 @@ Display:
 SUPPORTED
 CONTRADICTED
 MIXED
-INSUFFICIENT EVIDENCE
+INSUFFICIENT_EVIDENCE
 
 ## Summary
 
@@ -372,7 +391,7 @@ Each item should show:
 
 - source title
 - source domain
-- evidence excerpt/paraphrase
+- retrieved snippet or clearly identified faithful snippet paraphrase
 - source link
 
 ## Contradicting Evidence
@@ -436,10 +455,15 @@ SUPPORTS
 
         ↓
 
+ATOMIC CLAIM ASSESSMENT
+SUPPORTED
+
+        ↓
+
 FINAL ASSESSMENT
 MIXED
 
-The exact UI implementation can evolve, but the underlying traceability must remain.
+The exact UI implementation can evolve, but the underlying traceability must remain. Stable identifiers should be retained where appropriate: `claim_id`, `atomic_claim_id`, `query_id`, `search_result_id`, `evidence_id`, and `evidence_trail_id`.
 
 
 # 15. Source Links
@@ -488,18 +512,18 @@ Display:
 
 Display:
 
-"INSUFFICIENT EVIDENCE
+"INSUFFICIENT_EVIDENCE
 
 The available sources did not provide enough evidence
 to evaluate this claim reliably."
 
 ### SerpApi failure
 
-Display a useful error rather than crashing the application.
+Display a useful error rather than crashing the application. Return `502` from the API; do not fabricate evidence or a conclusion.
 
 ### LLM failure
 
-Display a useful error and do not fabricate a research result.
+Display a useful error and do not fabricate a research result. Return `502` from the API.
 
 
 # 18. MVP API
@@ -515,7 +539,9 @@ Example request:
   "claim": "Electric vehicles are cheaper to own than petrol cars."
 }
 
-The response should contain a structured research report.
+`POST /api/v1/research` is synchronous: it performs the bounded research workflow and returns the completed structured research report. Do not add WebSockets, background queues, polling/status endpoints, or distributed task systems to the MVP.
+
+The API uses `400` for invalid requests or validation errors, `502` for required SerpApi or configured LLM-provider failures, and `500` for unexpected internal errors. `200` is returned for a successful report, including a valid `INSUFFICIENT_EVIDENCE` outcome.
 
 The exact schema should be defined using Pydantic models.
 
@@ -567,7 +593,7 @@ After research:
 │ Claim → Query → Source → Evidence         │
 └───────────────────────────────────────────┘
 
-The UI should prioritize readability and traceability.
+The UI should prioritize readability and traceability. While the synchronous research request runs, it may show a spinner or progress messages.
 
 
 # 20. MVP Technical Requirements
@@ -579,10 +605,12 @@ FastAPI
 Streamlit
 SerpApi
 Pydantic
-LLM provider through an abstraction
+provider-agnostic LLM layer through an abstraction
 pytest
 
 Use environment variables for API credentials.
+
+Configure the LLM provider and model through environment variables; do not hard-code a vendor. LLM outputs that affect application state must be validated with Pydantic structured schemas.
 
 Required configuration should be documented in `.env.example`.
 
@@ -626,6 +654,8 @@ The following are explicitly outside the first MVP:
 - multilingual support
 - unlimited autonomous research
 - arbitrary truth percentages
+- direct source-page fetching or scraping
+- WebSockets, background queues, polling/status endpoints, or distributed task systems
 
 These may be considered after the core workflow is stable.
 
@@ -636,9 +666,11 @@ The MVP should avoid unnecessary API calls.
 
 Use:
 
-- limited search iterations
+- a maximum of 5 atomic claims per user claim
+- a maximum of 2 search queries per atomic claim
+- a maximum of 5 results considered per query
+- a maximum of 1 follow-up research round
 - targeted queries
-- result limits
 - clear stopping conditions
 
 Do not repeatedly search the same query without a reason.
@@ -677,7 +709,6 @@ Once the MVP is reliable, potential improvements can be evaluated based on their
 Possible future areas:
 
 - richer source analysis
-- source deduplication
 - better evidence ranking
 - persistent research history
 - visual evidence graphs

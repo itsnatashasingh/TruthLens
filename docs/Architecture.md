@@ -4,7 +4,9 @@
 
 TruthLens is an AI-powered evidence verification agent that researches factual claims using live web search.
 
-The system accepts a user claim, decomposes it into researchable components, generates targeted search queries, retrieves search results through SerpApi, extracts and classifies evidence, identifies conflicts or gaps, and produces an auditable research report.
+The system accepts a user claim, decomposes it into researchable atomic claims, generates targeted search queries, retrieves structured search-result data through SerpApi, classifies snippet-based evidence, identifies conflicts or gaps, and produces an auditable research report.
+
+For the MVP, SerpApi search-result data is the evidence acquisition layer. TruthLens does not fetch or scrape source webpages; it must not imply that it has read a full page.
 
 The architecture is designed around one core principle:
 
@@ -103,7 +105,7 @@ Responsibilities:
 
 - Accept a factual claim.
 - Start a research request.
-- Display research progress.
+- Display a spinner or progress messages while the synchronous research request runs.
 - Display the final assessment.
 - Display supporting evidence.
 - Display contradicting evidence.
@@ -111,7 +113,7 @@ Responsibilities:
 - Display the Evidence Trail.
 - Provide links to original sources.
 
-The frontend should not contain research logic.
+The frontend should not contain research logic. It does not need WebSockets, polling/status endpoints, or background-job integration for the MVP.
 
 It should communicate with the FastAPI backend through the defined API.
 
@@ -141,7 +143,9 @@ Example research request:
 }
 ```
 
-The response should contain structured information rather than only a plain text answer.
+`POST /api/v1/research` is synchronous: it completes the bounded research workflow before returning a structured `ResearchReport`, rather than returning a job identifier.
+
+MVP response policy is `200` for a successful report (including `INSUFFICIENT_EVIDENCE`), `400` for invalid requests or validation errors, `502` for a required SerpApi or configured LLM-provider failure, and `500` for unexpected internal errors. An external dependency failure must never be replaced with fabricated evidence or a fabricated conclusion.
 
 ### 3.3 Research Orchestrator
 
@@ -153,6 +157,8 @@ Claim
   ↓
 Claim Analysis
   ↓
+Atomic Claims
+  ↓
 Search Planning
   ↓
 Search
@@ -162,6 +168,8 @@ Result Normalization
 Evidence Extraction
   ↓
 Evidence Classification
+  ↓
+Atomic Claim Assessment
   ↓
 Conflict / Gap Detection
   ↓
@@ -203,9 +211,9 @@ The comparison depends on vehicle type, location, energy prices,
 purchase price, incentives, and ownership period.
 ```
 
-The decomposition should preserve the meaning of the original claim.
+The decomposition should preserve the meaning of the original claim. The original claim remains visible in the final report, and every atomic claim has a stable `atomic_claim_id` linked to its parent `claim_id`.
 
-The system should avoid creating unnecessary atomic claims.
+The system should avoid creating unnecessary atomic claims and must produce no more than 5 atomic claims per user claim by default. This is a bounded configuration value.
 
 ## 5. Search Planner
 
@@ -225,7 +233,7 @@ Generated queries:
 
 "electric vehicle total cost ownership maintenance research"
 ```
-The planner should generate searches designed to find evidence rather than simply repeat the user's wording.
+The planner should generate searches designed to find evidence rather than simply repeat the user's wording. It may choose one or more appropriate engines for an atomic claim, but must generate no more than 2 queries per atomic claim by default. Each query receives a stable `query_id` and links to its `atomic_claim_id`.
 
 ## 6. Search Engine Layer
 
@@ -254,7 +262,7 @@ Used for scientific, academic, and research-oriented claims.
 engine = google_scholar
 ```
 
-The Search Planner should determine which search category is appropriate.
+The Search Planner should determine which search category or categories are appropriate.
 
 The system should not blindly execute all three search types for every claim.
 
@@ -277,6 +285,8 @@ This abstraction makes the application easier to test and maintain.
 
 It also ensures that SerpApi remains a meaningful part of the research pipeline.
 
+SerpApi is a required core dependency, not an optional enhancement. The MVP uses its structured result data—title, URL/link, source/domain, publication/date metadata, snippet, and engine-specific metadata where available—as its evidence acquisition layer. No separate webpage-fetching or web-scraping service belongs in the MVP architecture.
+
 ## 8. Result Normalizer
 
 Different search engines can return different result structures.
@@ -286,8 +296,11 @@ The Result Normalizer converts them into a common internal representation.
 Conceptual model:
 ```Python
 SearchResult:
+    search_result_id
+    query_id
     title
     url
+    canonical_url
     domain
     snippet
     source_type
@@ -306,13 +319,15 @@ Example:
   "retrieved_at": "2026-09-19T..."
 }
 ```
-This allows downstream components to work with a consistent data structure.
+This allows downstream components to work with a consistent data structure. Results receive stable `search_result_id` values and should be deduplicated by canonicalized source URL where practical. Deduplication prevents repeated versions of the same source from being counted as independent evidence.
+
+`source_type` may be `web/general`, `news`, or `academic`, describing how a result was retrieved or classified. It is not a credibility ranking.
 
 ## 9. Evidence Extractor
 
-The Evidence Extractor determines whether a search result contains information relevant to the claim.
+The Evidence Extractor determines whether a SerpApi search result contains information relevant to the atomic claim.
 
-It should extract a concise evidence passage or paraphrase.
+It should retain a concise retrieved snippet or create a faithful paraphrase derived only from that snippet. It must label the representation accordingly and must not claim to have read the full source page.
 
 Example:
 ```Text
@@ -337,11 +352,13 @@ Every evidence object must retain:
 - related claim
 - relevance
 
+Evidence receives a stable `evidence_id` and links to its `claim_id`, `atomic_claim_id`, `query_id`, and `search_result_id`. Relevance, if retained, is only a research/ranking signal—not a truth, credibility, source-reliability, or truth-likelihood score.
+
 The system must never invent evidence that does not appear in the retrieved source data.
 
 ## 10. Evidence Classifier
 
-Each extracted evidence item is classified relative to a specific claim.
+Each extracted evidence item is classified relative to a specific atomic claim.
 
 Possible classifications:
 ```Text
@@ -380,6 +397,8 @@ Classification must always be relative to the specific claim being evaluated.
 
 A source mentioning the same topic does not automatically constitute evidence.
 
+An LLM may provide Pydantic-validated structured classifications, but it does not choose the overall verdict. `CONTEXTUALIZES` and `DOES_NOT_ADDRESS` explain evidence coverage but do not directly support or contradict an atomic claim.
+
 ## 11. Conflict and Gap Detector
 
 The Conflict and Gap Detector examines the collected evidence.
@@ -402,7 +421,7 @@ Contradicting evidence:    2
 Contextual evidence:       3
 Unaddressed evidence:      1
 ```
-The detector can trigger an additional search when an important evidence gap exists.
+The detector can trigger one additional, targeted research round when it identifies an unresolved contradiction, important evidence gap, ambiguous atomic claim, or need for a more targeted query. The MVP permits at most 1 follow-up round by default; this is a bounded configuration value.
 
 ## 12. Iterative Search Loop
 
@@ -442,7 +461,7 @@ The system should stop when:
 - additional searches are unlikely to materially improve coverage,
 - or the configured research limit has been reached.
 
-The MVP should use explicit limits to prevent uncontrolled search loops.
+The MVP uses explicit, configurable defaults to prevent uncontrolled search loops: 5 atomic claims per original claim, 2 queries per atomic claim, 5 results considered per query, and 1 follow-up round.
 
 ## 13. Evidence Model
 
@@ -451,14 +470,18 @@ The core internal object is an Evidence object.
 Conceptually:
 ```Python
 Evidence:
+    evidence_id
     claim_id
+    atomic_claim_id
+    query_id
+    search_result_id
     source_title
     source_url
     source_domain
     source_type
     publication_date
     retrieved_at
-    excerpt
+    excerpt  # retrieved snippet or faithful snippet paraphrase
     stance
     relevance
 ```
@@ -477,7 +500,7 @@ Example:
   "relevance": 0.91
 }
 ```
-The exact implementation may evolve, but source traceability must remain.
+The exact implementation may evolve, but source traceability must remain. Full-page source content is not an MVP input.
 
 ## 14. Research Report Model
 
@@ -494,6 +517,8 @@ ResearchReport
 ├── summary
 │
 ├── atomic_claims[]
+│
+├── atomic_claim_assessments[]
 │
 ├── supporting_evidence[]
 │
@@ -513,6 +538,10 @@ MIXED
 INSUFFICIENT_EVIDENCE
 ```
 TruthLens should not reduce the research result to an arbitrary percentage.
+
+The report retains the original claim and its `claim_id`. Each evidence-trail entry receives an `evidence_trail_id` and represents the linked chain from claim through atomic claim, query, SerpApi result, source, evidence, classification, and assessment.
+
+Overall assessment is deterministic aggregation of unique evidence classifications across atomic claims. For an atomic claim, both direct support and contradiction yields `MIXED`; direct support only yields `SUPPORTED`; direct contradiction only yields `CONTRADICTED`; neither yields `INSUFFICIENT_EVIDENCE`. For the original claim, any insufficiently addressed atomic claim yields `INSUFFICIENT_EVIDENCE`; otherwise any mixed atomic assessment or combination of supported and contradicted atomic assessments yields `MIXED`; all supported yields `SUPPORTED`; and all contradicted yields `CONTRADICTED`. Contextual and non-addressing evidence informs the explanation but does not directly determine support or contradiction.
 
 ## 15. Evidence Trail
 
@@ -596,7 +625,7 @@ Conceptually:
           ▼               ▼                ▼
    Claim Analysis   Evidence Analysis   Synthesis
 ```
-The LLM provider should be accessed through an abstraction so that the rest of the application is not tightly coupled to one provider.
+The LLM provider should be accessed through an abstraction so that the rest of the application is not tightly coupled to one provider. Provider and model are configured through environment variables; no vendor is hard-coded. Outputs that affect application state—including decomposition, planning, classification, gap analysis, and synthesis inputs—must be validated against Pydantic structured schemas.
 
 ## 17. Separation of Responsibilities
 
@@ -771,7 +800,7 @@ SYSTEM FAILURE
 ```
 and
 ```Text
-INSUFFICIENT EVIDENCE
+INSUFFICIENT_EVIDENCE
 ```
 They are not the same condition.
 
@@ -786,6 +815,8 @@ Do not introduce:
 - Kubernetes
 - distributed databases
 - browser automation
+- direct webpage fetching or scraping
+- WebSockets, polling/status endpoints, background job queues, or distributed task systems
 - complex authentication
 - real-time collaboration
 
@@ -814,7 +845,6 @@ Possible future extensions:
 - research history
 - persistent database
 - source credibility metadata
-- source deduplication
 - multilingual claims
 - additional search engines
 - citation graph visualization

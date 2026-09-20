@@ -14,7 +14,7 @@ TruthLens must help users understand the available evidence. It must not claim a
 
 Always preserve these principles:
 
-1. Evidence must come from real retrieved sources.
+1. MVP evidence must come from SerpApi search-result data returned for real retrieved sources.
 2. Every evidence item must retain its source URL.
 3. Search results are not automatically facts.
 4. Never invent citations, sources, quotations, statistics, or evidence.
@@ -24,7 +24,7 @@ Always preserve these principles:
 8. Do not implement an arbitrary numerical "truth score".
 9. Preserve an auditable evidence chain:
    
-   Claim → Search Query → Search Result → Source → Evidence → Assessment
+   Claim → Atomic Claim → Search Query → SerpApi Result → Source → Evidence → Evidence Classification → Atomic Claim Assessment → Overall Assessment
 
 10. SerpApi must be a meaningful part of the research workflow, not a decorative API call.
 
@@ -103,7 +103,7 @@ Initial search sources:
 
 Do not automatically run every search source for every claim.
 
-The search planner should determine which search source is appropriate.
+The search planner may select one or more appropriate search sources for a claim.
 
 Preserve important search metadata such as:
 
@@ -116,7 +116,9 @@ Preserve important search metadata such as:
 - publication date when available
 - retrieval timestamp
 
-Do not replace SerpApi with direct scraping in the MVP.
+For the MVP, SerpApi search-result data is the evidence acquisition layer. Use returned title, URL/link, domain/source, date metadata, snippet, and engine-specific metadata where available. Do not directly scrape, fetch, or imply that TruthLens read the full contents of source webpages.
+
+Displayed evidence excerpts must be either retrieved search-result snippets or faithful paraphrases of those snippets. Users must receive the original source URL so they can inspect the source themselves.
 
 ---
 
@@ -141,6 +143,8 @@ If evidence is insufficient, the system should be able to say so.
 
 Do not force a conclusion when the evidence does not support one.
 
+MVP research is bounded by configurable defaults: at most 5 atomic claims, 2 search queries per atomic claim, 5 results considered per query, and 1 follow-up research round. These limits control cost, latency, and complexity.
+
 ---
 
 ## 7. Evidence Integrity
@@ -152,20 +156,29 @@ Conceptually:
 ```python
 {
     "claim_id": "...",
+    "atomic_claim_id": "...",
+    "query_id": "...",
+    "search_result_id": "...",
+    "evidence_id": "...",
+    "evidence_trail_id": "...",
     "source_title": "...",
     "source_url": "...",
     "source_domain": "...",
     "source_type": "...",
     "publication_date": "...",
     "retrieved_at": "...",
-    "excerpt": "...",
+    "excerpt": "...",  # snippet or faithful snippet paraphrase
     "stance": "...",
     "relevance": 0.0
 }
 ```
-Do not create evidence from the model's general knowledge when that evidence is supposed to represent retrieved web research.
+Do not create evidence from the model's general knowledge when that evidence is supposed to represent retrieved web research. Do not present a snippet or paraphrase as a quotation from a full source page unless SerpApi returned that exact text.
 
-When an exact quotation is unavailable, use a clearly identified paraphrase rather than inventing quotation marks.
+When an exact snippet quotation is unavailable, use a clearly identified faithful paraphrase rather than inventing quotation marks.
+
+Deduplicate results using canonicalized source URLs where practical. Duplicate versions of the same source must not be treated as independent evidence or artificially increase the apparent amount of evidence. Source types such as `web/general`, `news`, and `academic` describe retrieval/classification only; they are not credibility rankings.
+
+If relevance is retained internally, it is only a research/ranking signal. It is not a measure of truth, credibility, source reliability, or truth likelihood.
 
 ## 8. Uncertainty
 
@@ -185,6 +198,8 @@ Avoid statements such as:
 - "Truth score: 87%"
 
 unless a future design explicitly establishes a defensible methodology for such a claim.
+
+The overall assessment is determined by deterministic aggregation of unique evidence classifications across atomic claims, not by an LLM choosing a verdict. For each atomic claim, direct supporting and contradicting evidence is aggregated as follows: both produces `MIXED`; only supporting produces `SUPPORTED`; only contradicting produces `CONTRADICTED`; neither produces `INSUFFICIENT_EVIDENCE`. `CONTEXTUALIZES` and `DOES_NOT_ADDRESS` provide explanation but not direct support or contradiction. The original claim is `INSUFFICIENT_EVIDENCE` if any atomic claim is insufficiently addressed; otherwise it is `MIXED` if any atomic claim is mixed or atomic claims differ between supported and contradicted, `SUPPORTED` if all are supported, and `CONTRADICTED` if all are contradicted.
 
 ## 9. Code Quality
 
@@ -221,6 +236,8 @@ Never hard-code:
 
 Use environment variables.
 
+The LLM provider and model must be configured through environment variables. Do not hard-code a vendor. Any LLM output that affects application state must use a Pydantic-validated structured schema.
+
 .env files containing secrets must never be committed to Git.
 
 Use .env.example to document required configuration variables without exposing actual credentials.
@@ -234,7 +251,9 @@ The initial API should include:
 - GET /api/v1/health
 - POST /api/v1/research
 
-The research endpoint should accept a user claim and return a structured research report.
+`POST /api/v1/research` is synchronous: it runs the bounded research workflow and returns the completed structured research report. The frontend may show a spinner or progress messages while waiting; do not add WebSockets, polling/status endpoints, background job queues, or distributed task systems to the MVP.
+
+The MVP error policy is: `400` for invalid requests or validation errors, `502` for required external dependency failures (including SerpApi or the configured LLM provider), and `500` for unexpected internal errors. A successful `200` response may validly contain `INSUFFICIENT_EVIDENCE`. Never fabricate evidence or a conclusion after an external dependency failure.
 
 Keep API schemas separate from internal implementation details where practical.
 
@@ -262,8 +281,9 @@ The Evidence Trail is a core TruthLens feature.
 The UI should allow a user to understand:
 
 Claim
+→ Atomic Claim
 → Search Query
-→ Search Result
+→ SerpApi Result
 → Source
 → Extracted Evidence
 → Evidence Classification
