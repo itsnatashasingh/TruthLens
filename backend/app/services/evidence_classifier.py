@@ -2,28 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Protocol
-from uuid import UUID
-
-from backend.app.models.evidence import Evidence, EvidenceStance
-
-
-class EvidenceClassificationAdapter(Protocol):
-    """Provider-agnostic boundary for semantic evidence classification."""
-
-    def classify(
-        self,
-        *,
-        atomic_claim: str,
-        evidence_excerpt: str,
-    ) -> EvidenceStance:
-        """Return the stance of evidence toward an atomic claim."""
+from backend.app.models.evidence import Evidence
+from backend.app.services.llm import LLMClassificationProvider
 
 
 class EvidenceClassifier:
-    """Assign an evidence stance using an injected classification adapter."""
+    """Assign an evidence stance using an injected classification provider."""
 
-    def __init__(self, adapter: EvidenceClassificationAdapter) -> None:
+    def __init__(self, adapter: LLMClassificationProvider) -> None:
         self._adapter = adapter
 
     def classify(
@@ -34,7 +20,7 @@ class EvidenceClassifier:
     ) -> Evidence:
         """Return a copy of evidence with its classified stance."""
 
-        stance = self._adapter.classify(
+        stance = self._adapter.classify_evidence(
             atomic_claim=atomic_claim,
             evidence_excerpt=evidence.excerpt,
         )

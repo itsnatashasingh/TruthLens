@@ -1,8 +1,10 @@
-"""API request and response schemas independent of research execution."""
+"""API request and response schemas for research execution."""
 
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+from backend.app.models.report import ResearchReport
 
 
 class HealthResponse(BaseModel):
@@ -13,7 +15,7 @@ class HealthResponse(BaseModel):
 
 
 class ResearchRequest(BaseModel):
-    """The minimal public contract for submitting a factual claim."""
+    """The public contract for submitting a factual claim."""
 
     claim: str = Field(min_length=1, max_length=2_000)
 
@@ -23,13 +25,12 @@ class ResearchRequest(BaseModel):
         """Reject whitespace-only requests and normalize accepted claims."""
 
         normalized_claim = value.strip()
+
         if not normalized_claim:
             raise ValueError("claim must not be empty")
+
         return normalized_claim
 
 
-class ResearchNotImplementedResponse(BaseModel):
-    """Explicit placeholder returned until research execution is implemented."""
-
-    status: Literal["not_implemented"] = "not_implemented"
-    detail: str = "Research execution has not yet been implemented."
+class ResearchResponse(ResearchReport):
+    """API response containing the completed research report."""

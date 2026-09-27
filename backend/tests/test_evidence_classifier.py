@@ -11,15 +11,14 @@ class StubClassificationAdapter:
         self.stance = stance
         self.calls: list[tuple[str, str]] = []
 
-    def classify(
-        self,
-        *,
-        atomic_claim: str,
-        evidence_excerpt: str,
-    ) -> EvidenceStance:
+    def classify_evidence(
+    self,
+    *,
+    atomic_claim: str,
+    evidence_excerpt: str,
+) -> EvidenceStance:
         self.calls.append((atomic_claim, evidence_excerpt))
         return self.stance
-
 
 def make_evidence() -> Evidence:
     return Evidence(

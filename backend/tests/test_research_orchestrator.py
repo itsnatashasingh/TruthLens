@@ -48,7 +48,7 @@ class TwoResultSerpApiClient:
 class SupportingClassificationAdapter:
     """Classify every evidence item as supporting."""
 
-    def classify(
+    def classify_evidence(
         self,
         *,
         atomic_claim: str,
@@ -60,7 +60,7 @@ class SupportingClassificationAdapter:
 class ContradictingClassificationAdapter:
     """Classify every evidence item as contradicting."""
 
-    def classify(
+    def classify_evidence(
         self,
         *,
         atomic_claim: str,
@@ -75,7 +75,7 @@ class MixedClassificationAdapter:
     def __init__(self) -> None:
         self._calls = 0
 
-    def classify(
+    def classify_evidence(
         self,
         *,
         atomic_claim: str,
