@@ -9,6 +9,7 @@ from backend.app.models.report import (
     OverallAssessment,
     ResearchReport,
 )
+from backend.app.services import conflict_gap_detector
 from backend.app.services.assessment_aggregator import AssessmentAggregator
 from backend.app.services.claim_analyzer import ClaimAnalyzer
 from backend.app.services.evidence_classifier import EvidenceClassifier
@@ -16,7 +17,7 @@ from backend.app.services.evidence_extractor import EvidenceExtractor
 from backend.app.services.result_normalizer import normalize_search_results
 from backend.app.services.serpapi import SerpApiClient
 from backend.app.services.source_selector import SourceSelector
-
+from backend.app.services.conflict_gap_detector import ConflictGapDetector
 
 MAX_RESULTS_PER_QUERY = 5
 
@@ -32,13 +33,15 @@ class ResearchOrchestrator:
         evidence_extractor: EvidenceExtractor,
         evidence_classifier: EvidenceClassifier,
         assessment_aggregator: AssessmentAggregator,
-    ) -> None:
+        conflict_gap_detector: ConflictGapDetector,
+) -> None:
         self._claim_analyzer = claim_analyzer
         self._serpapi_client = serpapi_client
         self._source_selector = source_selector
         self._evidence_extractor = evidence_extractor
         self._evidence_classifier = evidence_classifier
         self._assessment_aggregator = assessment_aggregator
+        self._conflict_gap_detector = conflict_gap_detector
 
     def research(self, claim: OriginalClaim) -> ResearchReport:
         """Run the bounded research workflow for one original claim."""
@@ -108,6 +111,17 @@ class ResearchOrchestrator:
 
         overall_assessment = self._assessment_aggregator.assess_overall(
             atomic_assessments
+        )
+
+
+        conflicts = self._conflict_gap_detector.detect_conflicts(
+            atomic_claims,
+            evidence,
+        )
+
+        gaps = self._conflict_gap_detector.detect_gaps(
+            atomic_claims,
+            evidence,
         )
 
         summary = self._build_summary(

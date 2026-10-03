@@ -37,7 +37,7 @@ class EvidenceTrailEntry(BaseModel):
 
 
 class ResearchReport(BaseModel):
-    """The future completed output of the bounded research workflow."""
+    """The completed output of the bounded research workflow."""
 
     original_claim: OriginalClaim
     assessment: OverallAssessment
@@ -46,3 +46,5 @@ class ResearchReport(BaseModel):
     atomic_claim_assessments: list[AtomicClaimAssessment] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     evidence_trail: list[EvidenceTrailEntry] = Field(default_factory=list)
+    conflicts: list[AtomicClaim] = Field(default_factory=list)
+    gaps: list[AtomicClaim] = Field(default_factory=list)

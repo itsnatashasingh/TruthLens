@@ -7,7 +7,7 @@ from backend.app.services.evidence_classifier import EvidenceClassifier
 from backend.app.services.evidence_extractor import EvidenceExtractor
 from backend.app.services.research_orchestrator import ResearchOrchestrator
 from backend.app.services.source_selector import SourceSelector
-
+from backend.app.services.conflict_gap_detector import ConflictGapDetector
 
 class FakeSerpApiClient:
     """Return deterministic SerpApi payloads without network access."""
@@ -96,6 +96,7 @@ def make_orchestrator(adapter, serpapi_client=None) -> ResearchOrchestrator:
         source_selector=SourceSelector(),
         evidence_extractor=EvidenceExtractor(),
         evidence_classifier=EvidenceClassifier(adapter),
+        conflict_gap_detector=ConflictGapDetector(),
         assessment_aggregator=AssessmentAggregator(),
     )
 
